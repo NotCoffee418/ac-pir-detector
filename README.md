@@ -28,16 +28,40 @@ This project uses the LilyGO TTGO T-Camera Mic ESP32 with its built-in PIR senso
 
 1. Copy the example configuration file:
    ```bash
-   cp include/config.example.h include/config.h
+   cp data/config.example.json data/config.json
    ```
 
-2. Edit `include/config.h` with your settings:
-   - **WIFI_SSID**: Your WiFi network name
-   - **WIFI_PASSWORD**: Your WiFi password
-   - **PCC_HOST**: API server hostname/IP (e.g., "192.168.1.100" or "api.example.com")
-   - **PCC_PORT**: API server port (default: 9040)
-   - **PCC_API_KEY**: Your PIR API key for authentication
-   - **DEVICE_NAME**: Device identifier (default: "Veranda")
+2. Edit `data/config.json` with your settings:
+   ```json
+   {
+     "wifi": {
+       "ssid": "your_wifi_ssid_here",
+       "password": "your_wifi_password_here"
+     },
+     "api": {
+       "host": "localhost",
+       "port": 9040,
+       "apiKey": "your_pir_api_key_here"
+     },
+     "device": {
+       "name": "Veranda"
+     },
+     "pir": {
+       "pin": 33,
+       "detectionCooldownMs": 30000
+     }
+   }
+   ```
+
+   Configuration parameters:
+   - **wifi.ssid**: Your WiFi network name
+   - **wifi.password**: Your WiFi password
+   - **api.host**: API server hostname/IP (e.g., "192.168.1.100" or "api.example.com")
+   - **api.port**: API server port (default: 9040)
+   - **api.apiKey**: Your PIR API key for authentication
+   - **device.name**: Device identifier (default: "Veranda")
+   - **pir.pin**: GPIO pin for PIR sensor (default: 33 for TTGO T-Camera)
+   - **pir.detectionCooldownMs**: Cooldown between detections in milliseconds (default: 30000)
 
 ### Building and Uploading
 
@@ -45,12 +69,17 @@ This project uses the LilyGO TTGO T-Camera Mic ESP32 with its built-in PIR senso
 # Build the project
 pio run
 
-# Upload to the board
+# Upload the filesystem (config file)
+pio run --target uploadfs
+
+# Upload the firmware to the board
 pio run --target upload
 
 # Monitor serial output
 pio device monitor
 ```
+
+**Note:** You must upload the filesystem (`uploadfs`) before or after uploading the firmware to ensure your `config.json` is available on the device.
 
 ## API Endpoint
 
@@ -89,9 +118,10 @@ curl -X POST "http://localhost:9040/api/pir/detect?device=Veranda" \
 ## Troubleshooting
 
 ### WiFi Connection Issues
-- Check SSID and password in config.h
+- Check SSID and password in data/config.json
 - Ensure the device is within range of your WiFi network
 - Check serial monitor for connection status
+- Make sure you uploaded the filesystem with `pio run --target uploadfs`
 
 ### API Request Failures
 - Verify PCC_HOST and PCC_PORT are correct
@@ -100,9 +130,15 @@ curl -X POST "http://localhost:9040/api/pir/detect?device=Veranda" \
 - Review serial monitor for HTTP response codes
 
 ### PIR Sensor Not Detecting
-- Ensure PIR_PIN is set to 33 (default for TTGO T-Camera)
+- Ensure pir.pin is set to 33 in config.json (default for TTGO T-Camera)
 - Check serial monitor for "PIR Motion detected!" messages
 - PIR sensor may need warm-up time after power-on
+
+### Configuration Not Loading
+- Verify config.json exists in the data folder
+- Ensure you ran `pio run --target uploadfs` to upload the filesystem
+- Check serial monitor for configuration loading errors
+- Validate JSON syntax using a JSON validator
 
 ## License
 MIT

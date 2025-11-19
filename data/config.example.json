@@ -1,0 +1,18 @@
+{
+  "wifi": {
+    "ssid": "your_wifi_ssid_here",
+    "password": "your_wifi_password_here"
+  },
+  "api": {
+    "host": "localhost",
+    "port": 9040,
+    "apiKey": "your_pir_api_key_here"
+  },
+  "device": {
+    "name": "Veranda"
+  },
+  "pir": {
+    "pin": 33,
+    "detectionCooldownMs": 30000
+  }
+}

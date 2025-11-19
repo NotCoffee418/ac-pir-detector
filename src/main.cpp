@@ -2,11 +2,21 @@
 #include <WiFi.h>
 #include <HTTPClient.h>
 #include <TFT_eSPI.h>
-#include "config.h"
+#include <LittleFS.h>
+#include <ArduinoJson.h>
 
 // Hardware pins for TTGO T-Camera
-#define PIR_SENSOR_PIN PIR_PIN
 #define BUTTON_PIN 34
+
+// Configuration variables (loaded from JSON)
+String wifiSsid;
+String wifiPassword;
+String pccHost;
+int pccPort;
+String pccApiKey;
+String deviceName;
+int pirPin;
+unsigned long detectionCooldownMs;
 
 // Global variables
 TFT_eSPI tft = TFT_eSPI();
@@ -15,6 +25,7 @@ bool isConnected = false;
 int detectionCount = 0;
 
 // Function prototypes
+bool loadConfig();
 void setupWiFi();
 void setupDisplay();
 void updateDisplay(const char* status);
@@ -26,12 +37,26 @@ void setup() {
   Serial.begin(115200);
   Serial.println("AC PIR Detector Starting...");
   
-  // Initialize PIR sensor pin
-  pinMode(PIR_SENSOR_PIN, INPUT);
-  
   // Initialize display
   setupDisplay();
   updateDisplay("Initializing...");
+  
+  // Initialize filesystem
+  if (!LittleFS.begin(true)) {
+    Serial.println("Failed to mount LittleFS!");
+    updateDisplay("FS Error");
+    while(1) delay(1000);
+  }
+  
+  // Load configuration
+  if (!loadConfig()) {
+    Serial.println("Failed to load configuration!");
+    updateDisplay("Config Error");
+    while(1) delay(1000);
+  }
+  
+  // Initialize PIR sensor pin
+  pinMode(pirPin, INPUT);
   
   // Connect to WiFi
   setupWiFi();
@@ -65,10 +90,10 @@ void loop() {
 void setupWiFi() {
   updateDisplay("Connecting WiFi...");
   Serial.print("Connecting to WiFi: ");
-  Serial.println(WIFI_SSID);
+  Serial.println(wifiSsid);
   
   WiFi.mode(WIFI_STA);
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  WiFi.begin(wifiSsid.c_str(), wifiPassword.c_str());
   
   int attempts = 0;
   while (WiFi.status() != WL_CONNECTED && attempts < 30) {
@@ -108,7 +133,7 @@ void updateDisplay(const char* status) {
   
   // Device name
   tft.setTextSize(1);
-  tft.drawString(DEVICE_NAME, tft.width() / 2, 60);
+  tft.drawString(deviceName.c_str(), tft.width() / 2, 60);
   
   // Status
   tft.setTextSize(2);
@@ -124,13 +149,13 @@ void updateDisplay(const char* status) {
 }
 
 void checkPIRSensor() {
-  int pirState = digitalRead(PIR_SENSOR_PIN);
+  int pirState = digitalRead(pirPin);
   
   if (pirState == HIGH) {
     unsigned long currentTime = millis();
     
     // Check if cooldown period has passed
-    if (currentTime - lastDetectionTime >= DETECTION_COOLDOWN_MS) {
+    if (currentTime - lastDetectionTime >= detectionCooldownMs) {
       Serial.println("PIR Motion detected!");
       handlePIRDetection();
       lastDetectionTime = currentTime;
@@ -171,7 +196,7 @@ bool sendDetectionAPI() {
   // Build the URL with device query parameter
   char url[256];
   snprintf(url, sizeof(url), "http://%s:%d/api/pir/detect?device=%s", 
-           PCC_HOST, PCC_PORT, DEVICE_NAME);
+           pccHost.c_str(), pccPort, deviceName.c_str());
   
   Serial.print("API URL: ");
   Serial.println(url);
@@ -179,8 +204,7 @@ bool sendDetectionAPI() {
   http.begin(url);
   
   // Add Authorization header
-  char authHeader[128];
-  snprintf(authHeader, sizeof(authHeader), "ApiKey %s", PCC_API_KEY);
+  String authHeader = "ApiKey " + pccApiKey;
   http.addHeader("Authorization", authHeader);
   
   // Send POST request
@@ -203,4 +227,71 @@ bool sendDetectionAPI() {
   
   http.end();
   return success;
+}
+
+bool loadConfig() {
+  Serial.println("Loading configuration from /config.json...");
+  
+  File configFile = LittleFS.open("/config.json", "r");
+  if (!configFile) {
+    Serial.println("Failed to open config.json");
+    Serial.println("Please upload config.json to the data folder");
+    return false;
+  }
+  
+  size_t size = configFile.size();
+  if (size > 1024) {
+    Serial.println("Config file size is too large");
+    configFile.close();
+    return false;
+  }
+  
+  // Allocate a buffer to store contents of the file
+  std::unique_ptr<char[]> buf(new char[size]);
+  configFile.readBytes(buf.get(), size);
+  configFile.close();
+  
+  // Parse JSON
+  JsonDocument doc;
+  DeserializationError error = deserializeJson(doc, buf.get());
+  
+  if (error) {
+    Serial.print("Failed to parse config.json: ");
+    Serial.println(error.c_str());
+    return false;
+  }
+  
+  // Load WiFi configuration
+  wifiSsid = doc["wifi"]["ssid"].as<String>();
+  wifiPassword = doc["wifi"]["password"].as<String>();
+  
+  // Load API configuration
+  pccHost = doc["api"]["host"].as<String>();
+  pccPort = doc["api"]["port"].as<int>();
+  pccApiKey = doc["api"]["apiKey"].as<String>();
+  
+  // Load device configuration
+  deviceName = doc["device"]["name"].as<String>();
+  
+  // Load PIR configuration
+  pirPin = doc["pir"]["pin"].as<int>();
+  detectionCooldownMs = doc["pir"]["detectionCooldownMs"].as<unsigned long>();
+  
+  // Print loaded configuration (without passwords/keys)
+  Serial.println("Configuration loaded successfully:");
+  Serial.print("  WiFi SSID: ");
+  Serial.println(wifiSsid);
+  Serial.print("  API Host: ");
+  Serial.println(pccHost);
+  Serial.print("  API Port: ");
+  Serial.println(pccPort);
+  Serial.print("  Device Name: ");
+  Serial.println(deviceName);
+  Serial.print("  PIR Pin: ");
+  Serial.println(pirPin);
+  Serial.print("  Detection Cooldown: ");
+  Serial.print(detectionCooldownMs);
+  Serial.println(" ms");
+  
+  return true;
 }
