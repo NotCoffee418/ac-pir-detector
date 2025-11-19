@@ -1,5 +1,5 @@
 # Configuration files
-include/config.h
+data/config.json
 
 # CodeQL artifacts
 _codeql_detected_source_root
