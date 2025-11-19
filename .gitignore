@@ -1,6 +1,9 @@
 # Configuration files
 include/config.h
 
+# CodeQL artifacts
+_codeql_detected_source_root
+
 # PlatformIO
 .pio
 .vscode/.browse.c_cpp.db*
