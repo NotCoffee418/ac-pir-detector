@@ -22,7 +22,7 @@ This project uses the LilyGO TTGO T-Camera Mic ESP32 with its built-in PIR senso
 
 ### Prerequisites
 - [PlatformIO](https://platformio.org/) installed
-- LilyGO TTGO T-Camera Mic ESP32 board
+- [LilyGO TTGO T-Camera Mic ESP32 board](https://github.com/lewisxhe/esp32-camera-series/blob/master/docs/T_CarmerV16.md)
 
 ### Configuration
 

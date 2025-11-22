@@ -1,12 +1,10 @@
 #include <Arduino.h>
 #include <WiFi.h>
 #include <HTTPClient.h>
-#include <TFT_eSPI.h>
 #include <LittleFS.h>
 #include <ArduinoJson.h>
 
-// Hardware pins for TTGO T-Camera
-#define BUTTON_PIN 34
+using fs::File;
 
 // Configuration variables (loaded from JSON)
 String wifiSsid;
@@ -19,7 +17,6 @@ int pirPin;
 unsigned long detectionCooldownMs;
 
 // Global variables
-TFT_eSPI tft = TFT_eSPI();
 unsigned long lastDetectionTime = 0;
 bool isConnected = false;
 int detectionCount = 0;
@@ -27,8 +24,6 @@ int detectionCount = 0;
 // Function prototypes
 bool loadConfig();
 void setupWiFi();
-void setupDisplay();
-void updateDisplay(const char *status);
 void handlePIRDetection();
 bool sendDetectionAPI();
 void checkPIRSensor();
@@ -38,15 +33,10 @@ void setup()
   Serial.begin(115200);
   Serial.println("AC PIR Detector Starting...");
 
-  // Initialize display
-  setupDisplay();
-  updateDisplay("Initializing...");
-
   // Initialize filesystem
   if (!LittleFS.begin(true))
   {
     Serial.println("Failed to mount LittleFS!");
-    updateDisplay("FS Error");
     while (1)
       delay(1000);
   }
@@ -55,7 +45,6 @@ void setup()
   if (!loadConfig())
   {
     Serial.println("Failed to load configuration!");
-    updateDisplay("Config Error");
     while (1)
       delay(1000);
   }
@@ -66,7 +55,6 @@ void setup()
   // Connect to WiFi
   setupWiFi();
 
-  updateDisplay("Ready");
   Serial.println("Setup complete. Monitoring PIR sensor...");
 }
 
@@ -78,33 +66,37 @@ void loop()
     if (isConnected)
     {
       isConnected = false;
-      updateDisplay("WiFi Lost");
       Serial.println("WiFi connection lost. Reconnecting...");
     }
-    setupWiFi();
+    // setupWiFi(); temp stop
   }
   else
   {
     if (!isConnected)
     {
       isConnected = true;
-      updateDisplay("Connected");
+      Serial.println("WiFi Connected");
     }
   }
 
   // Check PIR sensor
   checkPIRSensor();
 
-  delay(100); // Small delay to prevent CPU overload
+  delay(100);
 }
 
 void setupWiFi()
 {
-  updateDisplay("Connecting WiFi...");
+  Serial.println("Connecting WiFi...");
   Serial.print("Connecting to WiFi: ");
   Serial.println(wifiSsid);
 
+  WiFi.persistent(false);
+  WiFi.mode(WIFI_OFF);
+  delay(100);
   WiFi.mode(WIFI_STA);
+  WiFi.setTxPower(WIFI_POWER_19_5dBm); // Reduce WiFi power
+  WiFi.setSleep(false);
   WiFi.begin(wifiSsid.c_str(), wifiPassword.c_str());
 
   int attempts = 0;
@@ -121,54 +113,16 @@ void setupWiFi()
     Serial.println("\nWiFi connected!");
     Serial.print("IP address: ");
     Serial.println(WiFi.localIP());
-    updateDisplay("WiFi Connected");
-    delay(1000);
   }
   else
   {
     Serial.println("\nWiFi connection failed!");
-    updateDisplay("WiFi Failed");
-  }
-}
-
-void setupDisplay()
-{
-  tft.init();
-  tft.setRotation(1); // Landscape orientation
-  tft.fillScreen(TFT_BLACK);
-  tft.setTextColor(TFT_WHITE, TFT_BLACK);
-  tft.setTextDatum(MC_DATUM);
-  tft.setTextSize(2);
-}
-
-void updateDisplay(const char *status)
-{
-  tft.fillScreen(TFT_BLACK);
-
-  // Title
-  tft.setTextSize(2);
-  tft.drawString("PIR Detector", tft.width() / 2, 30);
-
-  // Device name
-  tft.setTextSize(1);
-  tft.drawString(deviceName.c_str(), tft.width() / 2, 60);
-
-  // Status
-  tft.setTextSize(2);
-  tft.drawString(status, tft.width() / 2, 90);
-
-  // Detection count
-  if (detectionCount > 0)
-  {
-    char countStr[32];
-    sprintf(countStr, "Detections: %d", detectionCount);
-    tft.setTextSize(1);
-    tft.drawString(countStr, tft.width() / 2, 120);
   }
 }
 
 void checkPIRSensor()
 {
+  Serial.println("Checking PIR sensor...");
   int pirState = digitalRead(pirPin);
 
   if (pirState == HIGH)
@@ -182,12 +136,16 @@ void checkPIRSensor()
       handlePIRDetection();
       lastDetectionTime = currentTime;
     }
+    else
+    {
+      Serial.println("PIR Motion detected but in cooldown period.");
+    }
   }
 }
 
 void handlePIRDetection()
 {
-  updateDisplay("Motion Detected!");
+  Serial.println("Motion Detected!");
 
   if (WiFi.status() == WL_CONNECTED)
   {
@@ -198,24 +156,17 @@ void handlePIRDetection()
     {
       detectionCount++;
       Serial.println("Detection sent successfully!");
-      updateDisplay("Sent to API");
-      delay(2000);
-      updateDisplay("Ready");
+      Serial.print("Total detections: ");
+      Serial.println(detectionCount);
     }
     else
     {
       Serial.println("Failed to send detection to API");
-      updateDisplay("API Failed");
-      delay(2000);
-      updateDisplay("Ready");
     }
   }
   else
   {
     Serial.println("WiFi not connected. Cannot send detection.");
-    updateDisplay("No WiFi");
-    delay(2000);
-    updateDisplay("Ready");
   }
 }
 
