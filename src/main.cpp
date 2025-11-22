@@ -3,6 +3,7 @@
 #include <HTTPClient.h>
 #include <LittleFS.h>
 #include <ArduinoJson.h>
+#include <SSD1306.h>
 
 using fs::File;
 
@@ -13,8 +14,12 @@ String pccHost;
 int pccPort;
 String pccApiKey;
 String deviceName;
-int pirPin;
 unsigned long detectionCooldownMs;
+bool currentPirState = false;
+
+// Global constants
+const int PIR_PIN = 19;
+SSD1306 display(0x3c, 21, 22); // Address, SDA, SCL
 
 // Global variables
 unsigned long lastDetectionTime = 0;
@@ -27,9 +32,15 @@ void setupWiFi();
 void handlePIRDetection();
 bool sendDetectionAPI();
 void checkPIRSensor();
+void setupDisplay();
+void updateDisplay();
 
 void setup()
 {
+  // Start display
+  setupDisplay();
+
+  // Start PIR detector
   Serial.begin(115200);
   Serial.println("AC PIR Detector Starting...");
 
@@ -50,7 +61,7 @@ void setup()
   }
 
   // Initialize PIR sensor pin
-  pinMode(pirPin, INPUT);
+  pinMode(PIR_PIN, INPUT);
 
   // Connect to WiFi
   setupWiFi();
@@ -83,6 +94,16 @@ void loop()
   checkPIRSensor();
 
   delay(100);
+}
+
+void setupDisplay()
+{
+  display.init();
+  display.flipScreenVertically();
+  display.setTextAlignment(TEXT_ALIGN_CENTER);
+  display.setFont(ArialMT_Plain_10);
+  display.clear();
+  display.display();
 }
 
 void setupWiFi()
@@ -123,7 +144,7 @@ void setupWiFi()
 void checkPIRSensor()
 {
   Serial.println("Checking PIR sensor...");
-  int pirState = digitalRead(pirPin);
+  int pirState = digitalRead(PIR_PIN);
 
   if (pirState == HIGH)
   {
@@ -132,15 +153,20 @@ void checkPIRSensor()
     // Check if cooldown period has passed
     if (currentTime - lastDetectionTime >= detectionCooldownMs)
     {
-      Serial.println("PIR Motion detected!");
+      Serial.println("PIR: Motion detected and handling!");
       handlePIRDetection();
       lastDetectionTime = currentTime;
     }
     else
     {
-      Serial.println("PIR Motion detected but in cooldown period.");
+      Serial.println("PIR: Motion detected but in cooldown period.");
     }
   }
+  else
+  {
+    Serial.println("PIR: No motion detected.");
+  }
+  updateDisplay();
 }
 
 void handlePIRDetection()
@@ -213,6 +239,43 @@ bool sendDetectionAPI()
   return success;
 }
 
+void updateDisplay()
+{
+  display.clear();
+
+  // Title
+  display.setFont(ArialMT_Plain_10);
+  display.drawString(64, 0, deviceName);
+
+  // WiFi status
+  if (isConnected)
+  {
+    display.drawString(64, 12, "WiFi: OK");
+  }
+  else
+  {
+    display.drawString(64, 12, "WiFi: --");
+  }
+
+  // Big V or X in the middle
+  display.setFont(ArialMT_Plain_24);
+  if (currentPirState)
+  {
+    display.drawString(64, 30, "V");
+  }
+  else
+  {
+    display.drawString(64, 30, "X");
+  }
+
+  // Detection count at bottom
+  display.setFont(ArialMT_Plain_10);
+  String countStr = "Count: " + String(detectionCount);
+  display.drawString(64, 54, countStr);
+
+  display.display();
+}
+
 bool loadConfig()
 {
   Serial.println("Loading configuration from /config.json...");
@@ -262,8 +325,7 @@ bool loadConfig()
   deviceName = doc["device"]["name"].as<String>();
 
   // Load PIR configuration
-  pirPin = doc["pir"]["pin"].as<int>();
-  detectionCooldownMs = doc["pir"]["detectionCooldownMs"].as<unsigned long>();
+  detectionCooldownMs = doc["pirDetectionCooldownMs"].as<unsigned long>();
 
   // Print loaded configuration (without passwords/keys)
   Serial.println("Configuration loaded successfully:");
@@ -276,7 +338,7 @@ bool loadConfig()
   Serial.print("  Device Name: ");
   Serial.println(deviceName);
   Serial.print("  PIR Pin: ");
-  Serial.println(pirPin);
+  Serial.println(PIR_PIN);
   Serial.print("  Detection Cooldown: ");
   Serial.print(detectionCooldownMs);
   Serial.println(" ms");

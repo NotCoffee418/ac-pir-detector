@@ -11,8 +11,5 @@
   "device": {
     "name": "Veranda"
   },
-  "pir": {
-    "pin": 33,
-    "detectionCooldownMs": 30000
-  }
+  "pirDetectionCooldownMs": 30000
 }
