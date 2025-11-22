@@ -4,6 +4,7 @@
 #include <LittleFS.h>
 #include <ArduinoJson.h>
 #include <SSD1306.h>
+#include <esp_wifi.h>
 
 using fs::File;
 
@@ -36,14 +37,22 @@ void updateDisplay();
 
 void setup()
 {
-  // Start display
-  setupDisplay();
-
-  // Start PIR detector
   Serial.begin(115200);
   Serial.println("AC PIR Detector Starting...");
 
-  // Initialize filesystem
+  // Fix WiFi power and sleep issues
+  WiFi.persistent(false);
+  WiFi.setSleep(false);         // CRITICAL: Disable power saving
+  WiFi.setAutoReconnect(false); // We'll handle reconnection
+
+  // Set WiFi to maximum power
+  WiFi.setTxPower(WIFI_POWER_19_5dBm); // Maximum power
+
+  // Set longer timeouts for beacon loss
+  esp_wifi_set_inactive_time(WIFI_IF_STA, 30); // 30 seconds before disconnect
+
+  setupDisplay();
+
   if (!LittleFS.begin(true))
   {
     Serial.println("Failed to mount LittleFS!");
@@ -51,7 +60,6 @@ void setup()
       delay(1000);
   }
 
-  // Load configuration
   if (!loadConfig())
   {
     Serial.println("Failed to load configuration!");
@@ -59,10 +67,8 @@ void setup()
       delay(1000);
   }
 
-  // Initialize PIR sensor pin
   pinMode(PIR_PIN, INPUT);
 
-  // Connect to WiFi
   setupWiFi();
 
   Serial.println("Setup complete. Monitoring PIR sensor...");
@@ -70,28 +76,28 @@ void setup()
 
 void loop()
 {
-  // Check WiFi connection
   if (WiFi.status() != WL_CONNECTED)
   {
     if (isConnected)
     {
+      Serial.println("WiFi lost, reconnecting...");
       isConnected = false;
-      Serial.println("WiFi connection lost. Reconnecting...");
+      WiFi.disconnect();
+      delay(1000);
+      setupWiFi();
     }
-    setupWiFi();
   }
   else
   {
     if (!isConnected)
     {
-      isConnected = true;
       Serial.println("WiFi Connected");
+      isConnected = true;
     }
   }
 
-  // Check PIR sensor
   checkPIRSensor();
-
+  updateDisplay();
   delay(1000);
 }
 
@@ -107,36 +113,38 @@ void setupDisplay()
 
 void setupWiFi()
 {
-  Serial.println("Connecting WiFi...");
   Serial.print("Connecting to WiFi: ");
   Serial.println(wifiSsid);
 
-  WiFi.persistent(false);
-  WiFi.mode(WIFI_OFF);
+  WiFi.disconnect(true); // Clear any old connection
   delay(100);
+
   WiFi.mode(WIFI_STA);
-  WiFi.setTxPower(WIFI_POWER_19_5dBm); // Reduce WiFi power
-  WiFi.setSleep(false);
+
+  // Configure WiFi for stability
+  wifi_config_t wifi_config = {};
+  esp_wifi_get_config(WIFI_IF_STA, &wifi_config);
+  wifi_config.sta.bssid_set = 0; // Don't lock to specific BSSID
+  wifi_config.sta.scan_method = WIFI_ALL_CHANNEL_SCAN;
+  wifi_config.sta.sort_method = WIFI_CONNECT_AP_BY_SIGNAL;
+  esp_wifi_set_config(WIFI_IF_STA, &wifi_config);
+
   WiFi.begin(wifiSsid.c_str(), wifiPassword.c_str());
 
-  int attempts = 0;
-  while (WiFi.status() != WL_CONNECTED && attempts < 30)
+  if (WiFi.waitForConnectResult(35000UL) != WL_CONNECTED)
   {
-    delay(500);
-    Serial.print(".");
-    attempts++;
+    Serial.println("WiFi: Failed to connect");
+    return;
   }
 
   if (WiFi.status() == WL_CONNECTED)
   {
     isConnected = true;
     Serial.println("\nWiFi connected!");
-    Serial.print("IP address: ");
-    Serial.println(WiFi.localIP());
-  }
-  else
-  {
-    Serial.println("\nWiFi connection failed!");
+    Serial.printf("IP: %s, RSSI: %d\n",
+                  WiFi.localIP().toString().c_str(),
+                  WiFi.RSSI());
+    delay(500); // Let network stack stabilize
   }
 }
 
@@ -149,15 +157,13 @@ void checkPIRSensor()
   {
     unsigned long currentTime = millis();
 
-    // Check if cooldown period has passed
     if (currentTime - lastDetectionTime >= detectionCooldownMs)
     {
-      Serial.println("PIR: Motion detected and handling!");
+      Serial.println("PIR: Motion detected!");
       handlePIRDetection();
       lastDetectionTime = currentTime;
     }
   }
-  updateDisplay();
 }
 
 void handlePIRDetection()
@@ -172,7 +178,6 @@ void handlePIRDetection()
     if (success)
     {
       Serial.println("Detection sent successfully!");
-      Serial.print("Total detections: ");
     }
     else
     {
@@ -187,9 +192,18 @@ void handlePIRDetection()
 
 bool sendDetectionAPI()
 {
+  // Check WiFi is actually connected before attempting
+  if (WiFi.status() != WL_CONNECTED)
+  {
+    Serial.println("WiFi not connected, skipping API call");
+    return false;
+  }
+
+  // Always use Method 2 - it's the only one that worked
+  Serial.println("Using Simple HTTPClient method");
+
   HTTPClient http;
 
-  // Build the URL with device query parameter
   char url[256];
   snprintf(url, sizeof(url), "http://%s:%d/api/pir/detect?device=%s",
            pccHost.c_str(), pccPort, deviceName.c_str());
@@ -198,39 +212,34 @@ bool sendDetectionAPI()
   Serial.println(url);
 
   http.begin(url);
+  http.setTimeout(3000); // Shorter timeout to avoid WiFi disconnect
 
-  // Add Authorization header
-  String authHeader = "ApiKey " + pccApiKey;
+  char authHeader[128];
+  snprintf(authHeader, sizeof(authHeader), "ApiKey %s", pccApiKey.c_str());
   http.addHeader("Authorization", authHeader);
+  http.addHeader("Content-Type", "application/json");
 
-  // Send POST request
-  int httpResponseCode = http.POST("");
+  int code = http.POST("{}");
 
   bool success = false;
-  if (httpResponseCode > 0)
+  if (code > 0)
   {
-    Serial.print("HTTP Response code: ");
-    Serial.println(httpResponseCode);
-
-    String response = http.getString();
-    Serial.print("Response: ");
-    Serial.println(response);
-
-    // Check if HTTP status is 2xx AND JSON has "success": true
-    if (httpResponseCode >= 200 && httpResponseCode < 300)
+    Serial.printf("HTTP Response: %d\n", code);
+    if (code >= 200 && code < 300)
     {
-      // Simple string check for "success":true (without full JSON parsing)
-      success = (response.indexOf("\"success\":true") >= 0 ||
-                 response.indexOf("\"success\": true") >= 0);
+      String response = http.getString();
+      Serial.print("Response: ");
+      Serial.println(response);
+      success = true;
     }
   }
   else
   {
-    Serial.print("Error code: ");
-    Serial.println(httpResponseCode);
+    Serial.printf("HTTP Error: %s\n", http.errorToString(code).c_str());
   }
 
   http.end();
+
   return success;
 }
 
@@ -238,11 +247,9 @@ void updateDisplay()
 {
   display.clear();
 
-  // Title
   display.setFont(ArialMT_Plain_10);
   display.drawString(64, 0, deviceName);
 
-  // WiFi SSID
   if (isConnected)
   {
     display.drawString(64, 12, wifiSsid);
@@ -252,7 +259,6 @@ void updateDisplay()
     display.drawString(64, 12, "WiFi: --");
   }
 
-  // WiFi strength
   if (isConnected)
   {
     int rssi = WiFi.RSSI();
@@ -264,7 +270,6 @@ void updateDisplay()
     display.drawString(64, 24, "");
   }
 
-  // Big V or X below WiFi info
   display.setFont(ArialMT_Plain_24);
   if (currentPirState)
   {
@@ -286,7 +291,6 @@ bool loadConfig()
   if (!configFile)
   {
     Serial.println("Failed to open config.json");
-    Serial.println("Please upload config.json to the data folder");
     return false;
   }
 
@@ -298,12 +302,10 @@ bool loadConfig()
     return false;
   }
 
-  // Allocate a buffer to store contents of the file
   std::unique_ptr<char[]> buf(new char[size]);
   configFile.readBytes(buf.get(), size);
   configFile.close();
 
-  // Parse JSON
   JsonDocument doc;
   DeserializationError error = deserializeJson(doc, buf.get());
 
@@ -314,22 +316,17 @@ bool loadConfig()
     return false;
   }
 
-  // Load WiFi configuration
   wifiSsid = doc["wifi"]["ssid"].as<String>();
   wifiPassword = doc["wifi"]["password"].as<String>();
 
-  // Load API configuration
   pccHost = doc["api"]["host"].as<String>();
   pccPort = doc["api"]["port"].as<int>();
   pccApiKey = doc["api"]["apiKey"].as<String>();
 
-  // Load device configuration
   deviceName = doc["device"]["name"].as<String>();
 
-  // Load PIR configuration
   detectionCooldownMs = doc["pirDetectionCooldownMs"].as<unsigned long>();
 
-  // Print loaded configuration (without passwords/keys)
   Serial.println("Configuration loaded successfully:");
   Serial.print("  WiFi SSID: ");
   Serial.println(wifiSsid);
