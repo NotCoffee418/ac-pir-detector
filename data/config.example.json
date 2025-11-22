@@ -4,7 +4,7 @@
     "password": "your_wifi_password_here"
   },
   "api": {
-    "host": "localhost",
+    "host": "raspberrypi.local",
     "port": 9040,
     "apiKey": "your_pir_api_key_here"
   },

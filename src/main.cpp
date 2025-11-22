@@ -24,7 +24,6 @@ SSD1306 display(0x3c, 21, 22); // Address, SDA, SCL
 // Global variables
 unsigned long lastDetectionTime = 0;
 bool isConnected = false;
-int detectionCount = 0;
 
 // Function prototypes
 bool loadConfig();
@@ -79,7 +78,7 @@ void loop()
       isConnected = false;
       Serial.println("WiFi connection lost. Reconnecting...");
     }
-    // setupWiFi(); temp stop
+    setupWiFi();
   }
   else
   {
@@ -93,7 +92,7 @@ void loop()
   // Check PIR sensor
   checkPIRSensor();
 
-  delay(100);
+  delay(1000);
 }
 
 void setupDisplay()
@@ -143,8 +142,8 @@ void setupWiFi()
 
 void checkPIRSensor()
 {
-  Serial.println("Checking PIR sensor...");
   int pirState = digitalRead(PIR_PIN);
+  currentPirState = (pirState == HIGH);
 
   if (pirState == HIGH)
   {
@@ -157,14 +156,6 @@ void checkPIRSensor()
       handlePIRDetection();
       lastDetectionTime = currentTime;
     }
-    else
-    {
-      Serial.println("PIR: Motion detected but in cooldown period.");
-    }
-  }
-  else
-  {
-    Serial.println("PIR: No motion detected.");
   }
   updateDisplay();
 }
@@ -180,10 +171,8 @@ void handlePIRDetection()
 
     if (success)
     {
-      detectionCount++;
       Serial.println("Detection sent successfully!");
       Serial.print("Total detections: ");
-      Serial.println(detectionCount);
     }
     else
     {
@@ -227,7 +216,13 @@ bool sendDetectionAPI()
     Serial.print("Response: ");
     Serial.println(response);
 
-    success = (httpResponseCode >= 200 && httpResponseCode < 300);
+    // Check if HTTP status is 2xx AND JSON has "success": true
+    if (httpResponseCode >= 200 && httpResponseCode < 300)
+    {
+      // Simple string check for "success":true (without full JSON parsing)
+      success = (response.indexOf("\"success\":true") >= 0 ||
+                 response.indexOf("\"success\": true") >= 0);
+    }
   }
   else
   {
@@ -247,31 +242,38 @@ void updateDisplay()
   display.setFont(ArialMT_Plain_10);
   display.drawString(64, 0, deviceName);
 
-  // WiFi status
+  // WiFi SSID
   if (isConnected)
   {
-    display.drawString(64, 12, "WiFi: OK");
+    display.drawString(64, 12, wifiSsid);
   }
   else
   {
     display.drawString(64, 12, "WiFi: --");
   }
 
-  // Big V or X in the middle
-  display.setFont(ArialMT_Plain_24);
-  if (currentPirState)
+  // WiFi strength
+  if (isConnected)
   {
-    display.drawString(64, 30, "V");
+    int rssi = WiFi.RSSI();
+    String signalStr = "Signal: " + String(rssi) + " dBm";
+    display.drawString(64, 24, signalStr);
   }
   else
   {
-    display.drawString(64, 30, "X");
+    display.drawString(64, 24, "");
   }
 
-  // Detection count at bottom
-  display.setFont(ArialMT_Plain_10);
-  String countStr = "Count: " + String(detectionCount);
-  display.drawString(64, 54, countStr);
+  // Big V or X below WiFi info
+  display.setFont(ArialMT_Plain_24);
+  if (currentPirState)
+  {
+    display.drawString(64, 40, "V");
+  }
+  else
+  {
+    display.drawString(64, 40, "X");
+  }
 
   display.display();
 }
