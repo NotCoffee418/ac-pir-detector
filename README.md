@@ -18,6 +18,9 @@ This project uses the LilyGO TTGO T-Camera Mic ESP32 with its built-in PIR senso
 - Detection counter
 - Auto-reconnect on WiFi loss
 
+## Case
+A 3D printable case for this project can be found [here](https://github.com/NotCoffee418/arbitrary-3d-models/ac_pir_detector_case).
+
 ## Setup
 
 ### Prerequisites
